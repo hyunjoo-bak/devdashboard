@@ -17,10 +17,14 @@ const PRIORITY_CLASS = {'1순위':'p1','2순위':'p2','3순위':'p3','4순위':'
 const PRIORITY_ORDER = {'1순위':1,'2순위':2,'3순위':3,'4순위':4,'5순위':5};
 
 // ===== API =====
+const API_BASE = window.location.hostname === 'hyunjoo-bak.github.io'
+  ? 'https://dashboard.smboard.cloud'
+  : '';
+
 async function api(path, method='GET', body=null) {
   const opts = { method, headers: {'Content-Type':'application/json'} };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
+  const res = await fetch(API_BASE + path, opts);
   const text = await res.text();
   try {
     const data = JSON.parse(text);
