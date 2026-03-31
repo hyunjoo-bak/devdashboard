@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>상품팀 업데이트 요청 현황</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <header class="header">
+    <div class="header-inner">
+      <h1 class="logo">📋 상품팀 업데이트 요청 현황</h1>
+      <nav class="nav">
+        <button class="nav-btn active" data-tab="dashboard">대시보드</button>
+        <button class="nav-btn" data-tab="monthly">요청월별 이슈</button>
+        <button class="nav-btn" data-tab="all">전체 이슈</button>
+        <button class="nav-btn" data-tab="history">편집이력</button>
+      </nav>
+      <div class="header-actions">
+        <button class="btn-refresh" id="btnRefresh">↻ 새로고침</button>
+        <span class="sync-time" id="syncTime"></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="loading" id="loading"><div class="spinner"></div><p>데이터 불러오는 중...</p></div>
+
+  <!-- 대시보드 -->
+  <div class="tab-content active" id="tab-dashboard">
+    <div class="container">
+      <div class="summary-cards" id="summaryCards"></div>
+      <div class="section">
+        <h2 class="section-title">요청월별 진행 현황 <span class="section-sub">(최근 4개월)</span></h2>
+        <div class="month-grid" id="monthGrid"></div>
+      </div>
+      <div class="charts-row">
+        <div class="chart-box"><h3>상태별 분포</h3><canvas id="chartStatus"></canvas></div>
+        <div class="chart-box"><h3>우선순위별 분포</h3><canvas id="chartPriority"></canvas></div>
+        <div class="chart-box">
+          <h3>지연 이슈 현황 <span id="delayedBadge" class="chart-sub-badge"></span></h3>
+          <div id="delayedEmpty" style="display:none;color:#aaa;font-size:13px;padding:20px 0;text-align:center">3개월 초과 지연 이슈 없음 ✓</div>
+          <canvas id="chartDelayed"></canvas>
+        </div>
+      </div>
+      <div class="section">
+        <h2 class="section-title">긴급·우선 이슈 진행현황</h2>
+        <div id="priorityProgress"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 요청월별 이슈 -->
+  <div class="tab-content scrollable" id="tab-monthly">
+    <div class="sticky-filter-bar" id="monthlyFilterBar">
+      <div class="container-pad">
+        <div class="toolbar">
+          <div class="month-filter-wrap">
+            <label>요청월 선택</label>
+            <div class="month-chip-row">
+              <div class="month-chips" id="monthChips"></div>
+              <select id="monthDropdown" class="filter-select month-dropdown" style="display:none">
+                <option value="">이전 요청월...</option>
+              </select>
+            </div>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn-carryover" id="btnCarryover" style="display:none">↪ 이월</button>
+            <button class="btn-add" id="btnAddIssue">+ 이슈 추가</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="table-scroll-area">
+      <div class="container-pad">
+        <div class="table-inner-wrap">
+          <table class="issue-table">
+            <thead>
+              <tr>
+                <th class="col-chk"><input type="checkbox" id="chkAllMonthly" onchange="toggleCheckAll('monthly',this.checked)"></th>
+                <th>이슈번호</th><th>우선순위</th><th>유형</th><th>담당자</th>
+                <th>제목</th><th>개발담당자</th><th>설계링크</th><th>최신상태</th><th>반영여부</th><th>편집</th>
+              </tr>
+            </thead>
+            <tbody id="monthlyTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 전체 이슈 -->
+  <div class="tab-content scrollable" id="tab-all">
+    <div class="sticky-filter-bar">
+      <div class="container-pad">
+        <div class="toolbar">
+          <div class="filter-group">
+            <input type="text" class="search-input" id="searchInput" placeholder="검색 (제목, 이슈번호, 담당자...)">
+            <select id="filterPriority" class="filter-select"><option value="">전체 우선순위</option></select>
+            <select id="filterStatus" class="filter-select"><option value="">전체 상태</option></select>
+            <select id="filterAssignee" class="filter-select"><option value="">전체 담당자</option></select>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn-bulk" id="btnBulkChange" style="display:none">✎ 일괄변경</button>
+            <button class="btn-add" id="btnAddIssue2">+ 이슈 추가</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="table-scroll-area">
+      <div class="container-pad">
+        <div class="table-inner-wrap">
+          <table class="issue-table">
+            <thead>
+              <tr>
+                <th class="col-chk"><input type="checkbox" id="chkAllTable" onchange="toggleCheckAll('all',this.checked)"></th>
+                <th>요청월</th><th>이슈번호</th><th>우선순위</th><th>유형</th><th>담당자</th>
+                <th>제목</th><th>개발담당자</th><th>설계링크</th><th>최신상태</th><th>반영여부</th><th>편집</th>
+              </tr>
+            </thead>
+            <tbody id="allTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 편집이력 -->
+  <div class="tab-content scrollable" id="tab-history">
+    <div class="sticky-filter-bar">
+      <div class="container-pad">
+        <div class="toolbar">
+          <input type="text" class="search-input" id="historySearch" placeholder="이슈번호, 제목, 항목명 검색...">
+          <button class="btn-refresh" onclick="loadHistory()">↻ 새로고침</button>
+        </div>
+      </div>
+    </div>
+    <div class="table-scroll-area">
+      <div class="container-pad">
+        <div class="table-inner-wrap">
+          <table class="issue-table">
+            <thead>
+              <tr><th>시간</th><th>접속 IP</th><th>이슈번호</th><th>제목</th><th>변경 항목</th><th>이전 값</th><th>변경 값</th></tr>
+            </thead>
+            <tbody id="historyTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 이슈 편집 모달 -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle">이슈 편집</h3>
+      <button class="modal-close" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="issueForm">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>요청월</label>
+            <div class="month-pick-wrap">
+              <select id="reqMonthYear" class="filter-select" onchange="updateReqMonthHidden()">
+                <option value="">년도</option>
+              </select>
+              <select id="reqMonthMonth" class="filter-select" onchange="updateReqMonthHidden()">
+                <option value="">월</option>
+                <option value="1">1월</option><option value="2">2월</option><option value="3">3월</option>
+                <option value="4">4월</option><option value="5">5월</option><option value="6">6월</option>
+                <option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
+                <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
+              </select>
+              <input type="hidden" name="요청월" id="reqMonthHidden">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>이슈번호</label>
+            <input type="text" name="이슈번호">
+          </div>
+          <div class="form-group full">
+            <label>이슈링크</label>
+            <input type="text" name="이슈링크" placeholder="https://...">
+          </div>
+          <div class="form-group">
+            <label>유형</label>
+            <div class="modal-select-wrap">
+              <select name="유형" id="modalType" onchange="handleModalSelectChange(this)"></select>
+              <input type="text" class="modal-custom-txt" placeholder="직접입력" style="display:none">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>우선순위</label>
+            <div class="modal-select-wrap">
+              <select name="우선순위" id="modalPriority" onchange="handleModalSelectChange(this)"></select>
+              <input type="text" class="modal-custom-txt" placeholder="직접입력" style="display:none">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>담당자</label>
+            <input type="text" name="담당자">
+          </div>
+          <div class="form-group">
+            <label>개발담당자</label>
+            <input type="text" name="개발담당자">
+          </div>
+          <div class="form-group full">
+            <label>제목</label>
+            <input type="text" name="제목">
+          </div>
+          <div class="form-group full">
+            <label>설명</label>
+            <textarea name="설명" rows="3"></textarea>
+          </div>
+          <div class="form-group">
+            <label>설계링크</label>
+            <input type="text" name="설계링크" placeholder="https://...">
+          </div>
+          <div class="form-group">
+            <label>개발 예상기간</label>
+            <input type="text" name="개발예상기간">
+          </div>
+          <div class="form-group">
+            <label>최신상태</label>
+            <div class="modal-select-wrap">
+              <select name="최신상태" id="modalStatus" onchange="handleModalSelectChange(this)"></select>
+              <input type="text" class="modal-custom-txt" placeholder="직접입력" style="display:none">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>반영여부</label>
+            <select name="반영여부">
+              <option value=""></option><option>Y</option><option>N</option><option>부분반영</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-cancel" id="btnCancel">취소</button>
+          <button type="submit" class="btn-save">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 이월 모달 -->
+<div class="modal-overlay" id="carryoverOverlay">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h3>이월 처리</h3>
+      <button class="modal-close" onclick="closeCarryover()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:16px;color:#555;font-size:13px">선택한 <strong id="carryoverCount">0</strong>건의 이월 대상 월을 선택하세요.</p>
+      <div class="form-group">
+        <label>이월 대상 월</label>
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <select id="carryoverYear" class="filter-select" style="flex:1"></select>
+          <select id="carryoverMonthSel" class="filter-select" style="flex:1">
+            <option value="01">1월</option><option value="02">2월</option><option value="03">3월</option>
+            <option value="04">4월</option><option value="05">5월</option><option value="06">6월</option>
+            <option value="07">7월</option><option value="08">8월</option><option value="09">9월</option>
+            <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-cancel" onclick="closeCarryover()">취소</button>
+        <button type="button" class="btn-save" onclick="confirmCarryover()">이월 처리</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 일괄변경 모달 -->
+<div class="modal-overlay" id="bulkOverlay">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>일괄변경</h3>
+      <button class="modal-close" onclick="closeBulk()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:16px;color:#555;font-size:13px">선택한 <strong id="bulkCount">0</strong>건에 적용할 값을 선택하세요. (비워두면 변경 안 함)</p>
+      <div class="form-grid" style="grid-template-columns:1fr">
+        <div class="form-group">
+          <label>우선순위</label>
+          <select id="bulkPriority" class="filter-select"><option value="">변경 안 함</option></select>
+        </div>
+        <div class="form-group">
+          <label>유형</label>
+          <select id="bulkType" class="filter-select"><option value="">변경 안 함</option></select>
+        </div>
+        <div class="form-group">
+          <label>최신상태</label>
+          <select id="bulkStatus" class="filter-select"><option value="">변경 안 함</option></select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-cancel" onclick="closeBulk()">취소</button>
+        <button type="button" class="btn-save" onclick="confirmBulk()">일괄 적용</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tooltip-box" id="tooltipBox"></div>
+<script src="app.js"></script>
+</body>
+</html>
