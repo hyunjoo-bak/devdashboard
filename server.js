@@ -17,9 +17,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 const SPREADSHEET_ID = '1BF6f9cVh8xw9_k-vwj-_CctotMJbLJrTl3qBySZiuFE';
 const SHEET_NAME = '이슈목록';
 const SETTINGS_SHEET = '설정값';
+const HISTORY_SHEET = '편집이력';
 const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
 const TOKEN_PATH = path.join(__dirname, 'token.json');
-const HISTORY_PATH = path.join(__dirname, 'edit-history.json');
 
 // 이슈링크(M), 이월월(N) 포함
 const HEADERS = ['요청월','유형','우선순위','담당자','제목','이슈번호','설계링크','설명','개발담당자','개발예상기간','최신상태','반영여부','이슈링크','이월월'];
@@ -104,15 +104,62 @@ function rowToObj(row) {
   return obj;
 }
 
-// 이력 저장
-function loadHistory() {
-  try { return JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8')); } catch { return []; }
+// 이력 저장 (구글 시트 기반)
+let historySheetReady = false;
+
+async function ensureHistorySheet(sheets) {
+  if (historySheetReady) return;
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const exists = meta.data.sheets.some(s => s.properties.title === HISTORY_SHEET);
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: HISTORY_SHEET } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${HISTORY_SHEET}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [['ts','ip','issueNum','title','row','changes']] },
+    });
+  }
+  historySheetReady = true;
 }
-function appendHistory(entry) {
-  const hist = loadHistory();
-  hist.unshift({ ts: new Date().toISOString(), ...entry });
-  if (hist.length > 2000) hist.length = 2000;
-  fs.writeFileSync(HISTORY_PATH, JSON.stringify(hist, null, 2));
+
+async function loadHistory() {
+  try {
+    const auth = getAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    await ensureHistorySheet(sheets);
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${HISTORY_SHEET}!A2:F10001`,
+    });
+    const rows = res.data.values || [];
+    return rows.slice(-2000).reverse().map(r => ({
+      ts: r[0] || '',
+      ip: r[1] || '',
+      issueNum: r[2] || '',
+      title: r[3] || '',
+      row: r[4] ? parseInt(r[4]) : null,
+      changes: JSON.parse(r[5] || '[]'),
+    }));
+  } catch(e) { console.error('history load error:', e.message); return []; }
+}
+
+async function appendHistory(entry) {
+  try {
+    const auth = getAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    await ensureHistorySheet(sheets);
+    const { ts, ip, issueNum, title, row, changes } = { ts: new Date().toISOString(), ...entry };
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${HISTORY_SHEET}!A:F`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [[ts, ip||'', issueNum||'', title||'', row||'', JSON.stringify(changes||[])]] },
+    });
+  } catch(e) { console.error('history append error:', e.message); }
 }
 
 // 캐시
@@ -199,8 +246,9 @@ app.get('/api/settings', async (req, res) => {
 });
 
 // API: 편집이력
-app.get('/api/history', (req, res) => {
-  res.json(loadHistory());
+app.get('/api/history', async (req, res) => {
+  try { res.json(await loadHistory()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // API: 이슈 일괄수정
@@ -232,7 +280,7 @@ app.put('/api/issues/bulk', async (req, res) => {
         requestBody: { values: [curRow] },
       });
       if (changes.length > 0) {
-        appendHistory({ issueNum: oldObj['이슈번호'], title: oldObj['제목'], row: rowNum, changes, ip });
+        await appendHistory({ issueNum: oldObj['이슈번호'], title: oldObj['제목'], row: rowNum, changes, ip });
       }
     }
     cache = null;
@@ -275,7 +323,7 @@ app.put('/api/issues/:row', async (req, res) => {
     });
 
     if (changes.length > 0) {
-      appendHistory({ issueNum: oldObj['이슈번호'] || '', title: oldObj['제목'] || '', row: rowNum, changes, ip });
+      await appendHistory({ issueNum: oldObj['이슈번호'] || '', title: oldObj['제목'] || '', row: rowNum, changes, ip });
     }
 
     cache = null;
@@ -296,7 +344,7 @@ app.post('/api/issues', async (req, res) => {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [newRow] },
     });
-    appendHistory({
+    await appendHistory({
       issueNum: issue['이슈번호'] || '',
       title: issue['제목'] || '',
       row: null,
@@ -317,8 +365,12 @@ app.post('/api/refresh', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n✅ 대시보드 서버 실행 중: http://localhost:${PORT}`);
-  console.log(`   네트워크 공유: http://<내 IP 주소>:${PORT}\n`);
-});
+if (require.main === module) {
+  const PORT = process.env.PORT || 4000;
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n✅ 대시보드 서버 실행 중: http://localhost:${PORT}`);
+    console.log(`   네트워크 공유: http://<내 IP 주소>:${PORT}\n`);
+  });
+}
+
+module.exports = app;
